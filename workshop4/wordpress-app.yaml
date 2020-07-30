@@ -1,0 +1,113 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+   name: wpress-cm
+   labels:
+      app: wordpress
+
+data:
+   WORDPRESS_DB_HOST: wpress-db-cluster-mysql.wpress.svc.cluster.local
+   WORDPRESS_DB_USER: root
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+   name: wpress-pvc
+   labels:
+      app: wordpress
+spec:
+   accessModes:
+   - ReadWriteOnce
+   resources:
+      requests:
+         storage: 1Gi
+   storageClassName: do-block-storage 
+   volumeMode: Filesystem
+
+---
+apiVersion:  apps/v1
+kind: Deployment
+metadata:
+   name: wpress-deploy
+   labels:
+      app: wordpress
+
+spec:
+   replicas: 1
+   selector:
+      matchLabels:
+         app: wordpress
+   template:
+      metadata:
+         name: wpress-po
+         labels:
+            app: wordpress
+      spec:
+         volumes:
+         - name: wpress-vol 
+           persistentVolumeClaim:
+              claimName: wpress-pvc
+         containers:
+            - name: wpress-container
+              image: wordpress
+              imagePullPolicy: IfNotPresent
+              env:
+              - name: WORDPRESS_DB_PASSWORD
+                valueFrom:
+                   secretKeyRef:
+                      name: wpress-db-secret
+                      key: ROOT_PASSWORD
+              envFrom:
+              - configMapRef:
+                  name: wpress-cm
+              ports:
+              - name: wpress-port
+                containerPort: 80
+              volumeMounts:
+              - name: wpress-vol
+                mountPath: /var/www/html
+   strategy:
+      type: RollingUpdate
+      rollingUpdate:
+         maxSurge: 1
+         maxUnavailable: 0
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+   name: wpress-svc
+   labels:
+      app: wordpress
+
+spec:
+   type: ClusterIP
+   selector:
+      app: wordpress
+   ports:
+   - name: wp-svc
+     port: 80
+     targetPort: wpress-port
+
+--- 
+apiVersion: networking.k8s.io/v1beta1
+kind: Ingress
+metadata:
+   name: wpress-ing
+   labels:
+      app: wordpress
+   annotations:
+      nginx.ingress.kubernetes.io/limit-rps: "5"
+
+spec:
+   ingressClassName: nginx
+   rules:
+   - host: acme.167.172.6.196.nip.io 
+     http:
+        paths:
+        - path: /
+          backend:
+             serviceName: wpress-svc
+             servicePort: wp-svc
